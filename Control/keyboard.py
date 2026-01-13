@@ -1,9 +1,14 @@
 """
-Keyboard/Mouse Control Interface for MuJoCo Car Simulation
-Provides UI input controls for driving the car
+MuJoCo 小车仿真的键盘控制界面
+提供 UI 输入控制来驾驶小车 (类似 ROS 小海龟 teleop)
 """
 
 import time
+import threading
+import sys
+import select
+import termios
+import tty
 import mujoco
 import mujoco.viewer
 from control import CarController
@@ -12,211 +17,170 @@ from control import CarController
 class KeyboardController:
     def __init__(self, model_path):
         """
-        Initialize the keyboard controller
+        初始化键盘控制器
 
-        Args:
-            model_path: Path to the MuJoCo XML model file
+        参数:
+            model_path: MuJoCo XML 模型文件的路径
         """
-        # Load MuJoCo model
+        # 加载 MuJoCo 模型
         self.model = mujoco.MjModel.from_xml_path(model_path)
         self.data = mujoco.MjData(self.model)
 
-        # Create car controller
+        # 创建小车控制器
         self.controller = CarController(self.model, self.data)
 
-        # Control state
-        self.forward_speed = 0.0  # -1 to 1
-        self.turn_speed = 0.0     # -1 to 1
+        # 控制状态 (使用类似 ROS teleop 的直接控制方式)
+        self.forward_speed = 0.0  # 前进速度 (-1 到 1)
+        self.turn_speed = 0.0     # 转向速度 (-1 到 1)
 
-        # Control parameters
-        self.acceleration = 0.05   # How fast the car accelerates
-        self.turn_rate = 0.05      # How fast the car turns
-        self.max_speed = 1.0       # Maximum forward speed
+        # 控制参数 (类似 ROS teleop)
+        self.forward_step = 0.1    # 每次按键的增量
+        self.turn_step = 0.1       # 每次按键的增量
+        self.max_speed = 1.0       # 最大速度
 
-        # Key states
-        self.keys = {
-            'up': False,
-            'down': False,
-            'left': False,
-            'right': False,
-            'space': False
-        }
+        # 按键状态
+        self.current_key = None
+        self.running = True
 
-    def handle_keyboard(self):
+        # 终端输入设置
+        self.settings = None
+
+    def get_key(self):
+        """从终端获取单个按键 (非阻塞)"""
+        if select.select([sys.stdin], [], [], 0)[0]:
+            return sys.stdin.read(1)
+        return None
+
+    def handle_key(self, key):
         """
-        Handle keyboard input for car control
+        处理单个按键 (类似 ROS teleop)
 
-        Controls:
-        - Arrow Up / W: Move forward
-        - Arrow Down / S: Move backward
-        - Arrow Left / A: Turn left
-        - Arrow Right / D: Turn right
-        - Space: Stop
+        控制键:
+        - w / i: 增加前进速度
+        - s / k: 减少前进速度 (后退)
+        - a / j: 左转
+        - d / l: 右转
+        - q: 退出
+        - 空格: 停止
         """
-        # Update control based on key states
-        if self.keys['space']:
-            # Emergency stop
+        if key is None:
+            return
+
+        key = key.lower()
+
+        if key == 'w' or key == 'i':
+            # 增加前进速度
+            self.forward_speed = min(self.forward_speed + self.forward_step, self.max_speed)
+        elif key == 's' or key == 'k':
+            # 减少前进速度
+            self.forward_speed = max(self.forward_speed - self.forward_step, -self.max_speed)
+        elif key == 'a' or key == 'j':
+            # 左转 (turn > 0 时左转，根据 car.xml 的定义)
+            self.turn_speed = min(self.turn_speed + self.turn_step, 1.0)
+        elif key == 'd' or key == 'l':
+            # 右转 (turn < 0 时右转，根据 car.xml 的定义)
+            self.turn_speed = max(self.turn_speed - self.turn_step, -1.0)
+        elif key == ' ':
+            # 立即停止
             self.forward_speed = 0.0
             self.turn_speed = 0.0
-        else:
-            # Forward/backward control
-            if self.keys['up']:
-                self.forward_speed += self.acceleration
-            elif self.keys['down']:
-                self.forward_speed -= self.acceleration
-            else:
-                # Gradually slow down when no key pressed
-                self.forward_speed *= 0.95
-
-            # Clamp forward speed
-            self.forward_speed = max(-self.max_speed, min(self.max_speed, self.forward_speed))
-
-            # Turn control
-            if self.keys['left']:
-                self.turn_speed -= self.turn_rate
-            elif self.keys['right']:
-                self.turn_speed += self.turn_rate
-            else:
-                # Gradually return to center
-                self.turn_speed *= 0.9
-
-            # Clamp turn speed
-            self.turn_speed = max(-1.0, min(1.0, self.turn_speed))
-
-        # Apply control to car
-        self.controller.set_control(self.forward_speed, self.turn_speed)
-
-    def on_key_press(self, key):
-        """Handle key press events"""
-        key_map = {
-            mujoco.mjtButton.mjBUTTON_UP: 'up',
-            mujoco.mjtButton.mjBUTTON_DOWN: 'down',
-            mujoco.mjtButton.mjBUTTON_LEFT: 'left',
-            mujoco.mjtButton.mjBUTTON_RIGHT: 'right',
-        }
-
-        # Map arrow keys
-        if key in key_map:
-            self.keys[key_map[key]] = True
-
-        # Map WASD keys (using keycode)
-        # These are common keycodes for W, A, S, D
-        wasd_map = {
-            87: 'up',      # W
-            83: 'down',    # S
-            65: 'left',    # A
-            68: 'right',   # D
-            32: 'space',   # Space
-        }
-
-        if key in wasd_map:
-            self.keys[wasd_map[key]] = True
-
-    def on_key_release(self, key):
-        """Handle key release events"""
-        key_map = {
-            mujoco.mjtButton.mjBUTTON_UP: 'up',
-            mujoco.mjtButton.mjBUTTON_DOWN: 'down',
-            mujoco.mjtButton.mjBUTTON_LEFT: 'left',
-            mujoco.mjtButton.mjBUTTON_RIGHT: 'right',
-        }
-
-        # Map arrow keys
-        if key in key_map:
-            self.keys[key_map[key]] = False
-
-        # Map WASD keys
-        wasd_map = {
-            87: 'up',      # W
-            83: 'down',    # S
-            65: 'left',    # A
-            68: 'right',   # D
-            32: 'space',   # Space
-        }
-
-        if key in wasd_map:
-            self.keys[wasd_map[key]] = False
+        elif key == 'q':
+            # 退出仿真
+            self.running = False
 
     def print_controls(self):
-        """Print control instructions"""
-        print("\n" + "="*50)
-        print("Car Control System")
-        print("="*50)
-        print("Controls:")
-        print("  Arrow Up / W     - Move Forward")
-        print("  Arrow Down / S   - Move Backward")
-        print("  Arrow Left / A   - Turn Left")
-        print("  Arrow Right / D  - Turn Right")
-        print("  Space            - Stop")
-        print("="*50)
-        print("\nSimulation running... Press Ctrl+C to exit\n")
+        """打印控制说明 (类似 ROS teleop)"""
+        print("\n" + "="*60)
+        print("小车控制系统 (ROS 风格 teleop)")
+        print("="*60)
+        print("\n控制命令:")
+        print("  w / i    : 增加前进速度")
+        print("  s / k    : 减少前进速度 (后退)")
+        print("  a / j    : 左转")
+        print("  d / l    : 右转")
+        print("  空格     : 立即停止")
+        print("  q        : 退出仿真")
+        print("\n" + "="*60)
+        print("按任意控制键开始驾驶小车...")
+        print("="*60 + "\n")
 
-    def get_status(self):
-        """Get current control status"""
-        return {
-            'forward': self.forward_speed,
-            'turn': self.turn_speed,
-            'position': self.controller.get_car_position(),
-        }
+    def print_status(self):
+        """打印当前状态 (ROS teleop 风格)"""
+        # 清除行并打印状态
+        status_line = (f"\r运动状态: 前进={self.forward_speed:5.2f} "
+                      f"转向={self.turn_speed:5.2f} | "
+                      f"位置: [{self.controller.get_car_position()[0]:5.2f}, "
+                      f"{self.controller.get_car_position()[1]:5.2f}]   ")
+        print(status_line, end="", flush=True)
 
     def run(self, duration=None):
         """
-        Run the simulation with keyboard control
+        运行带键盘控制的仿真
 
-        Args:
-            duration: Duration in seconds (None for infinite)
+        参数:
+            duration: 运行时长（秒），None 表示无限运行
         """
         self.print_controls()
 
-        with mujoco.viewer.launch_passive(self.model, self.data) as viewer:
-            start_time = time.time()
+        # 保存终端设置并设置为非阻塞模式
+        self.settings = termios.tcgetattr(sys.stdin)
+        try:
+            tty.setcbreak(sys.stdin.fileno())
 
-            while viewer.is_running():
-                # Check duration
-                if duration and (time.time() - start_time > duration):
-                    break
+            with mujoco.viewer.launch_passive(self.model, self.data) as viewer:
+                start_time = time.time()
+                last_print_time = 0
 
-                step_start = time.time()
+                while viewer.is_running() and self.running:
+                    # 检查运行时长
+                    if duration and (time.time() - start_time > duration):
+                        break
 
-                # Handle keyboard input and update control
-                self.handle_keyboard()
+                    step_start = time.time()
 
-                # Apply control signals
-                self.controller.apply_control()
+                    # 检查键盘输入
+                    key = self.get_key()
+                    if key:
+                        self.handle_key(key)
 
-                # Step physics
-                mujoco.mj_step(self.model, self.data)
+                    # 应用控制信号
+                    self.controller.set_control(self.forward_speed, self.turn_speed)
+                    self.controller.apply_control()
 
-                # Print status every 100 steps
-                if int(self.data.time * 100) % 100 == 0:
-                    status = self.get_status()
-                    print(f"\rTime: {self.data.time:.2f}s | "
-                          f"Forward: {status['forward']:.2f} | "
-                          f"Turn: {status['turn']:.2f} | "
-                          f"Position: [{status['position'][0]:.2f}, "
-                          f"{status['position'][1]:.2f}, "
-                          f"{status['position'][2]:.2f}]", end="")
+                    # 物理步进
+                    mujoco.mj_step(self.model, self.data)
 
-                # Sync viewer
-                viewer.sync()
+                    # 定期打印状态
+                    if time.time() - last_print_time > 0.1:  # 每 0.1 秒打印一次
+                        self.print_status()
+                        last_print_time = time.time()
 
-                # Time keeping
-                time_until_next_step = self.model.opt.timestep - (time.time() - step_start)
-                if time_until_next_step > 0:
-                    time.sleep(time_until_next_step)
+                    # 同步查看器
+                    viewer.sync()
+
+                    # 时间控制
+                    time_until_next_step = self.model.opt.timestep - (time.time() - step_start)
+                    if time_until_next_step > 0:
+                        time.sleep(time_until_next_step)
+
+        finally:
+            # 恢复终端设置
+            if self.settings:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.settings)
+            print("\n\n仿真结束。")
 
 
 def main():
-    """Main entry point"""
+    """主入口函数"""
     model_path = '../model/car.xml'
 
     try:
         controller = KeyboardController(model_path)
         controller.run()
     except KeyboardInterrupt:
-        print("\n\nSimulation stopped by user")
+        print("\n\n仿真被用户停止")
     except Exception as e:
-        print(f"\nError: {e}")
+        print(f"\n错误: {e}")
         import traceback
         traceback.print_exc()
 

@@ -1,6 +1,6 @@
 """
-Car Controller for MuJoCo Simulation
-Controls the forward and turn motors for the car
+MuJoCo 仿真小车控制器
+控制小车的前进和转向电机
 """
 
 import mujoco
@@ -10,75 +10,75 @@ import numpy as np
 class CarController:
     def __init__(self, model, data):
         """
-        Initialize the car controller
+        初始化小车控制器
 
-        Args:
-            model: MuJoCo model instance
-            data: MuJoCo data instance
+        参数:
+            model: MuJoCo 模型实例
+            data: MuJoCo 数据实例
         """
         self.model = model
         self.data = data
 
-        # Get actuator IDs
+        # 获取执行器ID
         self.forward_actuator_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, 'forward')
         self.turn_actuator_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, 'turn')
 
-        # Control signals (-1 to 1)
-        self.forward_control = 0.0
-        self.turn_control = 0.0
+        # 控制信号 (-1 到 1)
+        self.forward_control = 0.0  # 前进控制
+        self.turn_control = 0.0      # 转向控制
 
     def set_control(self, forward, turn):
         """
-        Set control signals for the car
+        设置小车的控制信号
 
-        Args:
-            forward: Forward motor control value (-1 to 1)
-                    -1 = full reverse, 0 = stop, 1 = full forward
-            turn: Turn motor control value (-1 to 1)
-                  -1 = full left, 0 = straight, 1 = full right
+        参数:
+            forward: 前进电机控制值 (-1 到 1)
+                    -1 = 全速后退, 0 = 停止, 1 = 全速前进
+            turn: 转向电机控制值 (-1 到 1)
+                  -1 = 全速左转, 0 = 直行, 1 = 全速右转
         """
-        # Clamp values to valid range
+        # 将值限制在有效范围内
         self.forward_control = np.clip(forward, -1.0, 1.0)
         self.turn_control = np.clip(turn, -1.0, 1.0)
 
     def get_forward_control(self):
-        """Get current forward control value"""
+        """获取当前前进控制值"""
         return self.forward_control
 
     def get_turn_control(self):
-        """Get current turn control value"""
+        """获取当前转向控制值"""
         return self.turn_control
 
     def stop(self):
-        """Stop the car"""
+        """停止小车"""
         self.forward_control = 0.0
         self.turn_control = 0.0
 
     def apply_control(self):
         """
-        Apply the control signals to the MuJoCo actuators
+        将控制信号应用到 MuJoCo 执行器
 
-        This should be called before each mj_step
+        这个方法应该在每次 mj_step 之前调用
         """
         self.data.ctrl[self.forward_actuator_id] = self.forward_control
         self.data.ctrl[self.turn_actuator_id] = self.turn_control
 
     def get_car_position(self):
         """
-        Get the current position of the car
+        获取小车当前位置
 
-        Returns:
-            numpy array of [x, y, z] position
+        返回:
+            numpy数组，包含 [x, y, z] 位置坐标
         """
         car_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, 'car')
         return self.data.xpos[car_body_id].copy()
 
     def get_car_orientation(self):
         """
-        Get the current orientation of the car
+        获取小车当前姿态
 
-        Returns:
-            numpy array of [w, x, y, z] quaternion
+        返回:
+            numpy数组，包含 [w, x, y, z] 四元数
         """
         car_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, 'car')
         return self.data.xquat[car_body_id].copy()
