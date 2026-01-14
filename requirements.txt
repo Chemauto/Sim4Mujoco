@@ -1,0 +1,11 @@
+# MuJoCo 仿真依赖
+# MuJoCo Physics Simulation Engine
+mujoco>=3.0.0
+
+# 数值计算库
+# Numerical Computing Library
+numpy>=1.21.0
+
+# 科学计算库 - 用于空间变换
+# Scientific Computing Library - for spatial transformations
+scipy>=1.7.0

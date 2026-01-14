@@ -3,6 +3,7 @@
 用于验证运动学公式是否正确
 """
 
+import os
 import mujoco
 import mujoco.viewer
 from omni_controller import OmniWheelController
@@ -39,7 +40,7 @@ def test_movement(model_path):
                 if choice == '6':
                     break
 
-                duration = 5.0  # 每个测试5秒
+                duration = 2.0  # 每个测试2秒
 
                 if choice == '1':
                     print("\n[前进测试] 机器人应该向前直线运动...")
@@ -115,5 +116,9 @@ def test_movement(model_path):
 
 if __name__ == "__main__":
     import numpy as np  # 确保导入了numpy
-    model_path = '/home/dora/RoboOs/New/Sim/Just4Test/model/assets/scene.xml'
+
+    # 使用相对路径自动适配不同电脑
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(script_dir, "../model/assets/scene.xml")
+
     test_movement(model_path)
