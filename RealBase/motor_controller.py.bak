@@ -1,0 +1,436 @@
+#!/usr/bin/env python3
+"""全向轮底盘控制模块
+
+支持3全向轮底盘的运动控制,使用Feetech电机
+"""
+
+import time
+from typing import Dict, Optional, Tuple
+import numpy as np
+
+from motors.feetech.feetech import FeetechMotorsBus, OperatingMode
+from motors import Motor, MotorNormMode
+
+
+class OmniWheelController:
+    """3全向轮底盘控制器
+
+    支持3个全向轮的独立速度控制
+    """
+
+    # 电机ID配置 - 修改这里即可更改所有电机ID
+    WHEEL_IDS = [13, 14, 15]
+
+    def __init__(
+        self,
+        port: str = "/dev/ttyACM0",
+        wheel_radius: float = 0.05,  # 轮子半径(米)
+        robot_radius: float = 0.15,  # 机器人半径(米),从中心到轮子的距离
+    ):
+        """初始化底盘控制器
+
+        Args:
+            port: 串口端口
+            wheel_radius: 轮子半径(米)
+            robot_radius: 从机器人中心到轮子的距离(米)
+        """
+        self.port = port
+        self.wheel_radius = wheel_radius
+        self.robot_radius = robot_radius
+        self.base_bus = None
+        self.current_speeds = [0, 0, 0]  # 3个轮子的当前速度
+
+    def connect(self) -> bool:
+        """连接底盘电机
+
+        Returns:
+            连接成功返回True,否则返回False
+        """
+        try:
+            # 创建底盘电机总线
+            self.base_bus = FeetechMotorsBus(
+                port=self.port,
+                motors={
+                    "wheel_1": Motor(OmniWheelController.WHEEL_IDS[0], "sts3215", MotorNormMode.RANGE_M100_100),
+                    "wheel_2": Motor(OmniWheelController.WHEEL_IDS[1], "sts3215", MotorNormMode.RANGE_M100_100),
+                    "wheel_3": Motor(OmniWheelController.WHEEL_IDS[2], "sts3215", MotorNormMode.RANGE_M100_100),
+                },
+            )
+
+            # 连接总线
+            self.base_bus.connect()
+            print(f"✓ 已连接到底盘电机总线: {self.port}")
+
+            # 配置电机为速度控制模式
+            with self.base_bus.torque_disabled():
+                self.base_bus.configure_motors()
+                for motor in self.base_bus.motors:
+                    self.base_bus.write("Operating_Mode", motor, OperatingMode.VELOCITY.value)
+
+            # 使能扭矩
+            self.base_bus.enable_torque()
+
+            return True
+
+        except Exception as e:
+            print(f"✗ 底盘连接失败: {e}")
+            return False
+
+    def disconnect(self):
+        """断开底盘连接"""
+        if self.base_bus is not None:
+            try:
+                # 停止所有电机
+                self.stop_all()
+                time.sleep(0.5)
+                # 断开连接
+                self.base_bus.disconnect(disable_torque=True)
+                print(f"✓ 已断开底盘电机")
+            except Exception as e:
+                print(f"✗ 断开连接时出错: {e}")
+            finally:
+                self.base_bus = None
+
+    def control_wheel(
+        self,
+        wheel_id: int,
+        direction: int,
+        speed: int
+    ) -> Dict:
+        """控制单个轮子转动
+
+        Args:
+            wheel_id: 电机ID (7, 8, 9)
+            direction: 转动方向 (1=正转, -1=反转)
+            speed: 转动速度 (0-100, 0表示停止)
+
+        Returns:
+            执行结果字典
+        """
+        if self.base_bus is None:
+            return {
+                "success": False,
+                "message": "底盘未连接",
+                "wheel_id": wheel_id
+            }
+
+        if wheel_id not in self.WHEEL_IDS:
+            return {
+                "success": False,
+                "message": f"无效的轮子ID: {wheel_id}, 必须是{self.WHEEL_IDS[0]}, {self.WHEEL_IDS[1]}, 或{self.WHEEL_IDS[2]}",
+                "wheel_id": wheel_id
+            }
+
+        if direction not in [1, -1]:
+            return {
+                "success": False,
+                "message": f"无效的方向: {direction}, 必须是1或-1",
+                "wheel_id": wheel_id
+            }
+
+        if not 0 <= speed <= 100:
+            return {
+                "success": False,
+                "message": f"无效的速度: {speed}, 必须在0-100之间",
+                "wheel_id": wheel_id
+            }
+
+        try:
+            # 计算实际速度值 (考虑方向)
+            actual_speed = direction * speed
+
+            # 根据电机ID获取电机名称和索引
+            wheel_index = self.WHEEL_IDS.index(wheel_id)
+            motor_name = f"wheel_{wheel_index + 1}"
+
+            # 设置速度
+            # 注意:速度值范围通常在-1023到1023之间
+            # 我们将0-100映射到这个范围
+            velocity_value = int(actual_speed * 10.23)  # 100 * 10.23 = 1023
+
+            self.base_bus.write("Goal_Velocity", motor_name, velocity_value, normalize=False)
+
+            # 更新当前速度
+            self.current_speeds[wheel_index] = actual_speed
+
+            direction_str = "正转" if direction > 0 else "反转"
+
+            return {
+                "success": True,
+                "message": f"轮子{wheel_id} {direction_str}, 速度: {speed}%",
+                "wheel_id": wheel_id,
+                "direction": direction,
+                "direction_str": direction_str,
+                "speed": speed,
+                "actual_speed": actual_speed
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"控制失败: {str(e)}",
+                "wheel_id": wheel_id
+            }
+
+    def stop_wheel(self, wheel_id: int) -> Dict:
+        """停止指定轮子
+
+        Args:
+            wheel_id: 电机ID (1, 2, 3)
+
+        Returns:
+            执行结果字典
+        """
+        return self.control_wheel(wheel_id, direction=1, speed=0)
+
+    def stop_all(self) -> Dict:
+        """停止所有轮子
+
+        Returns:
+            执行结果字典
+        """
+        if self.base_bus is None:
+            return {
+                "success": False,
+                "message": "底盘未连接"
+            }
+
+        try:
+            for wheel_id in self.WHEEL_IDS:
+                self.control_wheel(wheel_id, direction=1, speed=0)
+
+            return {
+                "success": True,
+                "message": "所有轮子已停止"
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"停止失败: {str(e)}"
+            }
+
+    def get_wheel_speed(self, wheel_id: int) -> Dict:
+        """获取指定轮子的当前速度
+
+        Args:
+            wheel_id: 电机ID (1, 2, 3)
+
+        Returns:
+            速度信息字典
+        """
+        if self.base_bus is None:
+            return {
+                "success": False,
+                "message": "底盘未连接",
+                "wheel_id": wheel_id
+            }
+
+        if wheel_id not in self.WHEEL_IDS:
+            return {
+                "success": False,
+                "message": f"无效的轮子ID: {wheel_id}",
+                "wheel_id": wheel_id
+            }
+
+        try:
+            wheel_index = self.WHEEL_IDS.index(wheel_id)
+            speed = self.current_speeds[wheel_index]
+
+            return {
+                "success": True,
+                "wheel_id": wheel_id,
+                "speed": abs(speed),
+                "direction": 1 if speed >= 0 else -1,
+                "direction_str": "正转" if speed >= 0 else "反转"
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"读取速度失败: {str(e)}",
+                "wheel_id": wheel_id
+            }
+
+    def get_all_speeds(self) -> Dict:
+        """获取所有轮子的当前速度
+
+        Returns:
+            所轮子速度信息
+        """
+        if self.base_bus is None:
+            return {
+                "success": False,
+                "message": "底盘未连接"
+            }
+
+        try:
+            speeds = {}
+            for wheel_id in self.WHEEL_IDS:
+                result = self.get_wheel_speed(wheel_id)
+                if result["success"]:
+                    speeds[f"wheel_{wheel_id}"] = {
+                        "speed": result["speed"],
+                        "direction": result["direction"],
+                        "direction_str": result["direction_str"]
+                    }
+
+            return {
+                "success": True,
+                "speeds": speeds
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"读取速度失败: {str(e)}"
+            }
+
+    def move_vector(self, vx: float, vy: float, omega: float = 0.0) -> Dict:
+        """以速度向量控制底盘运动
+
+        Args:
+            vx: 前进速度 (m/s)
+            vy: 横移速度 (m/s)
+            omega: 旋转速度 (rad/s)
+
+        Returns:
+            执行结果字典
+
+        Note:
+            这是3全向轮底盘的运动学控制接口
+            轮子1: 前方 (0度)
+            轮子2: 右后 (120度)
+            轮子3: 左后 (240度)
+        """
+        if self.base_bus is None:
+            return {
+                "success": False,
+                "message": "底盘未连接"
+            }
+
+        try:
+            # 3全向轮底盘的运动学逆解
+            # 轮子布置: 0°, 120°, 240°
+            angles = [0, 2*np.pi/3, 4*np.pi/3]
+
+            wheel_speeds = []
+            for i, angle in enumerate(angles):
+                # 计算每个轮子的线速度
+                # v_wheel = vx * cos(θ) + vy * sin(θ) + omega * robot_radius
+                v_wheel = (vx * np.cos(angle) +
+                          vy * np.sin(angle) +
+                          omega * self.robot_radius)
+
+                # 转换为轮子转速 (rad/s)
+                wheel_angular_velocity = v_wheel / self.wheel_radius
+
+                # 转换为百分比速度 (假设最大转速为XX rad/s)
+                # 这里需要根据实际电机参数调整
+                max_speed = 10.0  # 假设最大转速为10 rad/s
+                speed_percent = min(100, max(0, abs(wheel_angular_velocity) / max_speed * 100))
+
+                # 确定方向
+                direction = 1 if wheel_angular_velocity >= 0 else -1
+
+                wheel_speeds.append((direction, int(speed_percent)))
+
+            # 应用到每个轮子
+            for i, (direction, speed) in enumerate(wheel_speeds):
+                wheel_id = i + 1
+                self.control_wheel(wheel_id, direction, speed)
+
+            return {
+                "success": True,
+                "message": f"底盘运动: vx={vx:.2f}m/s, vy={vy:.2f}m/s, omega={omega:.2f}rad/s",
+                "vx": vx,
+                "vy": vy,
+                "omega": omega,
+                "wheel_speeds": {
+                    f"wheel_{i+1}": {
+                        "direction": int(direction),
+                        "speed": int(speed)
+                    }
+                    for i, (direction, speed) in enumerate(wheel_speeds)
+                }
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"运动控制失败: {str(e)}"
+            }
+
+
+# 全局控制器实例
+_base_controller: Optional[OmniWheelController] = None
+
+
+def get_base_controller() -> OmniWheelController:
+    """获取全局底盘控制器实例
+
+    Returns:
+        底盘控制器实例
+    """
+    global _base_controller
+    if _base_controller is None:
+        _base_controller = OmniWheelController()
+    return _base_controller
+
+
+# 测试代码
+if __name__ == "__main__":
+    # 创建底盘控制器
+    base = OmniWheelController(port="/dev/ttyACM1")
+
+    # 连接
+    if base.connect():
+        print("底盘连接成功!")
+
+        # 测试单个轮子控制
+        print("\n测试轮子1正转,速度50%")
+        result = base.control_wheel(base.WHEEL_IDS[0], direction=1, speed=50)
+        print(result["message"])
+
+        time.sleep(2)
+
+        print("\n测试轮子1反转,速度50%")
+        result = base.control_wheel(base.WHEEL_IDS[0], direction=-1, speed=50)
+        print(result["message"])
+
+        time.sleep(2)
+
+        print("\n停止轮子1")
+        result = base.stop_wheel(base.WHEEL_IDS[0])
+        print(result["message"])
+
+        # 测试所有轮子
+        print("\n所有轮子正转,速度30%")
+        for wheel_id in base.WHEEL_IDS:
+            result = base.control_wheel(wheel_id, direction=1, speed=30)
+            print(result["message"])
+
+        time.sleep(2)
+
+        print("\n停止所有轮子")
+        result = base.stop_all()
+        print(result["message"])
+
+        # 测试向量控制
+        print("\n测试向量控制: 前进")
+        result = base.move_vector(vx=0.1, vy=0.0, omega=0.0)
+        if result["success"]:
+            print(result["message"])
+            print("各轮子速度:")
+            for wheel, speed_info in result["wheel_speeds"].items():
+                print(f"  {wheel}: 方向={speed_info['direction']}, 速度={speed_info['speed']}%")
+
+        time.sleep(2)
+
+        print("\n停止所有轮子")
+        base.stop_all()
+
+        # 断开连接
+        base.disconnect()
+    else:
+        print("底盘连接失败!")

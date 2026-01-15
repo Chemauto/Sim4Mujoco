@@ -1,0 +1,6 @@
+numpy
+pyserial
+scservo-sdk
+draccus
+deepdiff
+tqdm
