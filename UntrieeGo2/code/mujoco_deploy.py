@@ -97,7 +97,7 @@ class MuJoCoPolicy:
         return x.squeeze(0) if x.shape[0] == 1 else x
 
     def get_action(self, obs: np.ndarray) -> np.ndarray:
-        """获取动作（已经是缩放后的关节位置偏移）"""
+        """获取动作"""
         obs_tensor = torch.from_numpy(obs).float()
 
         with torch.no_grad():
@@ -105,7 +105,7 @@ class MuJoCoPolicy:
 
         action = action_tensor.cpu().numpy()
 
-        # IsaacLab的action_scale = 0.25
+        # IsaacLab训练时使用了action_scale=0.25
         action = action * 0.25
 
         return action
@@ -132,6 +132,9 @@ class MuJoCoDemo:
         self.vx = 0.0
         self.vy = 0.0
         self.wz = 0.0
+
+        # 速度命令缩放（IsaacLab训练时可能使用了缩放）
+        self.vel_command_scale = 1.0
 
         # MuJoCo配置（从XML）
         # 关节定义顺序 (Joint 1-12): FL_hip, FL_thigh, FL_calf, FR_hip, FR_thigh, FR_calf, RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
@@ -168,14 +171,16 @@ class MuJoCoDemo:
         ])
 
         # PD增益（从IsaacLab DCMotorCfg）
-        self.kp = 25.0
-        self.kd = 0.5
+        # 增加kp以提高响应速度
+        self.kp = 50.0  # 从 25.0 增加到 50.0
+        self.kd = 1.0   # 从 0.5 增加到 1.0
 
         self.last_action = np.zeros(12)
 
         print(f"[3] 配置完成")
         print(f"    关节数: {len(self.joint_indices)}")
         print(f"    Actuator数: {len(self.actuator_indices)}")
+        print(f"    PD增益: kp={self.kp}, kd={self.kd}")
 
         self.running = True
 
@@ -224,8 +229,8 @@ class MuJoCoDemo:
         gravity_world = np.array([0.0, 0.0, -1.0])
         projected_gravity = rotation.inv().apply(gravity_world)
 
-        # 速度命令
-        velocity_command = np.array([self.vx, self.vy, self.wz])
+        # 速度命令（应用缩放）
+        velocity_command = np.array([self.vx, self.vy, self.wz]) * self.vel_command_scale
 
         # 高度扫描
         height_scan = np.zeros(187)
@@ -382,6 +387,7 @@ class MuJoCoDemo:
                 print("  s        - 停止 (保持站立)")
                 print("  q        - 退出")
                 print("=" * 60)
+                print("\n注意: 建议速度范围 0.3-0.8 m/s")
                 print("\n请输入命令:")
 
                 try:
@@ -470,6 +476,7 @@ class MuJoCoDemo:
         print("    0.0 0.0 0.5   - 原地旋转 0.5 rad/s")
         print("    s            - 停止 (保持站立)")
         print("    q            - 退出")
+        print("  注意: 建议速度范围 0.3-0.8 m/s")
         print("=" * 60)
 
 
