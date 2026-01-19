@@ -190,7 +190,8 @@ class OmniWheelController:
                 vy = 0
 
             # 使用运动学矩阵计算机器人速度 -> 轮子线速度 -> 轮子角速度
-            robot_velocity = np.array([vx, vy, omega])
+            # 注意: y轴取反以匹配实际机器人坐标系
+            robot_velocity = np.array([vx, -vy, omega])
             wheel_linear_speeds = self.kinematics_matrix @ robot_velocity
             wheel_angular_velocities = wheel_linear_speeds / self.wheel_radius
 
@@ -223,7 +224,8 @@ class OmniWheelController:
 
         try:
             # 使用运动学矩阵计算机器人速度 -> 轮子线速度 -> 轮子角速度
-            robot_velocity = np.array([vx, vy, omega])
+            # 注意: y轴取反以匹配实际机器人坐标系
+            robot_velocity = np.array([vx, -vy, omega])
             wheel_linear_speeds = self.kinematics_matrix @ robot_velocity
             wheel_angular_velocities = wheel_linear_speeds / self.wheel_radius
 
@@ -292,9 +294,10 @@ class OmniWheelController:
         velocity_vector = self.kinematics_matrix_inv @ wheel_linear_speeds
         vx, vy, omega = velocity_vector
 
+        # y轴取反以匹配实际机器人坐标系
         return {
             "vx": vx,
-            "vy": vy,
+            "vy": -vy,
             "omega": omega
         }
 
