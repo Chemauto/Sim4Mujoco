@@ -237,9 +237,12 @@ def main(host, port):
                     raise KeyboardInterrupt
 
             # 读取摇杆轴值
+            # 左摇杆 Y 轴 (axis 1): 前进/后退, 上为-1, 下为1, 所以取反
             vx_raw = -joystick_reader.get_axis(1)
+            # 左摇杆 X 轴 (axis 0): 左移/右移
             vy_raw = joystick_reader.get_axis(0)
-            omega_raw = joystick_reader.get_axis(3)
+            # 右摇杆 X 轴 (axis 3): 旋转, 取反使右摇杆右转为正
+            omega_raw = -joystick_reader.get_axis(3)
 
             # 应用死区
             vx = vx_raw if abs(vx_raw) > JOYSTICK_DEADZONE else 0.0

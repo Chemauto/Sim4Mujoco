@@ -8,20 +8,23 @@
 
 ```
 RealBase/
-├── motor_controller.py      # 底盘控制器主模块
-├── test_motor.py            # 统一的测试程序
-├── joy_control.py           # 手柄控制程序
-├── requirements.txt         # Python依赖包列表
-├── README.md                # 本文档
-└── motors/                  # 电机驱动模块(已包含)
+├── motor_controller.py       # 底盘控制器主模块
+├── test_motor.py             # 统一的测试程序
+├── joy_sim.py                # 虚拟手柄控制程序
+├── joy_real.py               # 真实Xbox手柄控制程序
+├── joy_remote_client.py      # 手柄远程控制客户端（电脑端）
+├── joy_remote_server.py      # 手柄远程控制服务端（开发板端）
+├── requirements.txt          # Python依赖包列表
+├── README.md                 # 本文档
+└── motors/                   # 电机驱动模块
     ├── __init__.py
-    ├── motors_bus.py        # 电机总线抽象层
-    ├── calibration_gui.py   # 校准工具
-    ├── feetech/             # Feetech舵机驱动
+    ├── motors_bus.py         # 电机总线抽象层
+    ├── calibration_gui.py    # 校准工具
+    ├── feetech/              # Feetech舵机驱动
     │   ├── __init__.py
-    │   ├── feetech.py       # Feetech电机总线实现
-    │   └── tables.py        # 控制表和参数
-    └── utils/               # 工具函数
+    │   ├── feetech.py        # Feetech电机总线实现
+    │   └── tables.py         # 控制表和参数
+    └── utils/                # 工具函数
         ├── __init__.py
         ├── encoding_utils.py
         └── utils.py
@@ -71,22 +74,24 @@ python3 test_motor.py
 - 组合运动
 - 单轮控制
 
-### 4. 手柄控制
+## 手柄控制
 
-使用虚拟手柄或真实手柄控制底盘运动。
+提供三种手柄控制方式，可根据场景选择：
 
-**启动虚拟手柄模拟器（如果需要）：**
+### 方式1: 虚拟手柄控制（推荐用于开发板直接控制）
+
+使用虚拟手柄GUI软件进行控制，无需真实手柄硬件。
+
+**启动虚拟手柄模拟器（在电脑上）：**
 ```bash
 cd /home/dora/RoboOs/LekiwiTest/Project4_SimJoy
 ./run.sh
 ```
 
-**运行手柄控制程序：**
+**运行手柄控制程序（在开发板上）：**
 ```bash
-python3 joy_control.py
-
-# 或指定串口
-python3 joy_control.py --port /dev/ttyACM1
+cd ~/LekiwiTest/RealBase
+python3 joy_sim.py --port /dev/ttyACM0
 ```
 
 **控制映射：**
@@ -96,15 +101,109 @@ python3 joy_control.py --port /dev/ttyACM1
 | 左摇杆左右 | 左移/右移 |
 | 右摇杆左右 | 原地旋转 |
 
-**配置参数**（在 `joy_control.py` 中修改）：
+**配置参数**（在 `joy_sim.py` 中修改）：
 - `LINEAR_SPEED = 0.3` - 最大平移速度 (m/s)
 - `OMEGA_SPEED = 0.8` - 最大旋转速度 (rad/s)
 - `JOYSTICK_DEADZONE = 0.1` - 手柄死区阈值
 
 **工作原理：**
 - 虚拟手柄模拟器会定期将状态写入 `/tmp/virtual_joystick_state.pkl`
-- `joy_control.py` 通过读取该文件获取手柄输入
-- 如果虚拟手柄退出，状态文件会被自动删除，机器人会自动停止
+- `joy_sim.py` 通过读取该文件获取手柄输入
+- 如果虚拟手柄退出，机器人会自动停止
+
+---
+
+### 方式2: 真实Xbox手柄本地控制（适用于有xpad驱动的系统）
+
+直接使用真实Xbox手柄控制底盘。需要系统支持xbox手柄驱动。
+
+**运行手柄控制程序：**
+```bash
+# 在电脑或支持xbox手柄的开发板上运行
+python3 joy_real.py --port /dev/ttyACM0
+```
+
+**控制映射：**
+| 输入 | 功能 |
+|------|------|
+| 左摇杆上下 | 前进/后退 (vx) |
+| 左摇杆左右 | 左移/右移 (vy) |
+| 右摇杆左右 | 原地旋转 (omega) |
+| 左摇杆按下(LS) | 切换速度档位 |
+
+**速度档位：**
+- 低速: 0.15 m/s, 0.4 rad/s
+- 中速: 0.30 m/s, 0.8 rad/s (默认)
+- 高速: 0.50 m/s, 1.2 rad/s
+
+**配置参数**（在 `joy_real.py` 中修改）：
+- `LINEAR_SPEED = 0.3` - 最大线速度 (m/s)
+- `OMEGA_SPEED = 0.8` - 最大角速度 (rad/s)
+- `JOYSTICK_DEADZONE = 0.1` - 手柄死区
+
+**特性：**
+- 自动校准摇杆零点偏移
+- 支持pygame手柄驱动
+- 实时监控手柄连接状态
+
+**系统要求：**
+- 需要安装pygame: `pip install pygame`
+- 需要内核支持xbox手柄驱动（xpad模块）
+- Ubuntu 22.04等主流发行版默认支持
+
+---
+
+### 方式3: 真实Xbox手柄远程控制（推荐用于Orange Pi等开发板）
+
+在电脑上读取手柄输入，通过网络远程控制开发板上的底盘。适用于开发板缺少手柄驱动的情况。
+
+**步骤1: 在开发板上启动服务器**
+```bash
+# SSH登录开发板
+ssh HwHiAiUser@192.168.0.155
+
+# 运行服务端
+cd ~/LekiwiTest/RealBase
+python3 joy_remote_server.py --serial /dev/ttyACM0
+```
+
+**步骤2: 在电脑上运行客户端**
+```bash
+# 确保手柄已连接到电脑
+cd /home/dora/RoboOs/LekiwiTest/RealBase
+python3 joy_remote_client.py --host 192.168.0.155
+```
+
+**参数说明：**
+- `--host`: 开发板IP地址（默认: 192.168.0.155）
+- `--port`: 通信端口（默认: 9999）
+- `--serial`: 串口端口（仅服务器端，默认: /dev/ttyACM0）
+
+**控制映射与速度档位：** 同方式2
+
+**特性：**
+- ✓ 电脑有完整的xbox手柄驱动支持
+- ✓ 通过网络控制，无需在开发板上配置驱动
+- ✓ 低延迟，实时性好
+- ✓ 断线自动停止机器人
+
+**网络配置：**
+- 确保电脑和开发板在同一局域网
+- 开发板默认监听端口: 9999
+- 防火墙需要开放9999端口
+
+---
+
+## 手柄控制方式对比
+
+| 特性 | 虚拟手柄 | 本地真实手柄 | 远程真实手柄 |
+|------|---------|-------------|-------------|
+| 需要手柄硬件 | ✗ | ✓ | ✓ |
+| 需要驱动支持 | ✗ | ✓ | 电脑端需要 |
+| 系统兼容性 | 高 | 中 | 高 |
+| 控制体验 | 鼠标操作 | 真实手柄 | 真实手柄 |
+| 网络延迟 | 无 | 无 | <10ms |
+| 推荐场景 | 测试/开发 | 电脑直接控制 | 开发板控制 |
 
 ## 主要功能
 
@@ -238,7 +337,7 @@ print(f"速度: {result['speed']}%, 方向: {result['direction_str']}")
 
 ### 配置参数
 
-**类常量** (可在 `motor_controller.py:25-29` 修改):
+**类常量** (可在 `motor_controller.py` 修改):
 
 ```python
 class OmniWheelController:
@@ -250,6 +349,7 @@ class OmniWheelController:
     BASE_RADIUS = 0.125      # 从机器人中心到轮子的距离 (米)
     MAX_RAW_VELOCITY = 3000  # 最大原始速度值 (ticks)
     STEPS_PER_DEG = 4096.0 / 360.0  # 每度的步数
+    VELOCITY_SCALE = 0.3     # 全局速度缩放因子
 ```
 
 **初始化参数**:
@@ -259,7 +359,8 @@ OmniWheelController(
     port="/dev/ttyACM0",           # 串口端口
     wheel_radius=0.05,             # 轮子半径(米)
     robot_radius=0.125,            # 机器人半径(米)
-    max_raw=3000                   # 最大原始速度值
+    max_raw=3000,                  # 最大原始速度值
+    velocity_scale=0.3             # 速度缩放因子
 )
 ```
 
@@ -307,12 +408,13 @@ base = OmniWheelController(port="/dev/ttyACM0")
 
 #### 初始化
 ```python
-OmniWheelController(port, wheel_radius, robot_radius, max_raw)
+OmniWheelController(port, wheel_radius, robot_radius, max_raw, velocity_scale)
 ```
 - `port`: 串口端口 (默认 "/dev/ttyACM0")
 - `wheel_radius`: 轮子半径(米), 默认0.05
 - `robot_radius`: 机器人半径(米), 默认0.125
 - `max_raw`: 最大原始速度值, 默认3000
+- `velocity_scale`: 速度缩放因子, 默认0.3
 
 #### 连接控制
 ```python
@@ -349,6 +451,7 @@ _raw_to_degps(raw_speed: int) -> float                   # 原始值 → 度/秒
 
 ## 依赖项
 
+### 基础依赖
 - numpy - 数值计算
 - pyserial - 串口通信
 - scservo-sdk - Feetech舵机SDK
@@ -356,9 +459,25 @@ _raw_to_degps(raw_speed: int) -> float                   # 原始值 → 度/秒
 - deepdiff - 数据对比
 - tqdm - 进度条
 
+### 手柄控制依赖
+
+**虚拟手柄 (joy_sim.py):**
+- pygame - 读取手柄状态文件
+
+**真实手柄本地 (joy_real.py):**
+- pygame - 手柄驱动和输入
+
+**真实手柄远程 (joy_remote_*):**
+- pygame (客户端) - 手柄驱动
+- pickle - 数据序列化
+- socket - 网络通信
+
 安装:
 ```bash
 pip install -r requirements.txt
+
+# 额外安装pygame（用于手柄控制）
+pip install pygame
 ```
 
 ## 注意事项
@@ -384,12 +503,18 @@ pip install -r requirements.txt
        base.disconnect()
    ```
 
+5. **手柄驱动**:
+   - Ubuntu 22.04等主流发行版默认支持xbox手柄
+   - Orange Pi等开发板可能缺少驱动模块，建议使用远程控制方案
+   - 检查驱动: `lsmod | grep xpad`
+
 ## 故障排除
 
 ### 连接失败
-- 检查串口端口是否正确
+- 检查串口端口是否正确: `ls /dev/tty*`
 - 检查USB线缆是否连接
 - 检查电机电源是否开启
+- 尝试添加sudo权限: `sudo chmod 666 /dev/ttyACM0`
 
 ### 电机不响应
 - 检查电机ID是否正确
@@ -400,8 +525,26 @@ pip install -r requirements.txt
 - 检查轮子方向定义是否符合实际
 - 调整 `robot_radius` 参数
 - 检查轮子半径参数 `wheel_radius`
+- 调整 `VELOCITY_SCALE` 速度缩放因子
+
+### 手柄无法识别
+**虚拟手柄:**
+- 确保虚拟手柄模拟器正在运行
+- 检查状态文件: `ls -l /tmp/virtual_joystick_state.pkl`
+
+**真实手柄本地:**
+- 检查手柄是否连接: `lsusb | grep -i xbox`
+- 检查驱动模块: `lsmod | grep xpad`
+- 如果没有驱动，使用远程控制方案
+
+**真实手柄远程:**
+- 确保电脑和开发板在同一网络
+- 检查开发板IP是否正确
+- 检查防火墙设置
+- 确保服务端程序已启动
 
 ## 参考资料
 
-- [lerobot lekiwi 实现](/home/dora/lerobot/src/lerobot/robots/lekiwi/lekiwi.py)
+- [lerobot lekiwi 实现](https://github.com/huggingface/lerobot)
 - [Feetech STS3215 手册](https://www.feetechrc.com/)
+- [pygame 文档](https://www.pygame.org/docs/)
